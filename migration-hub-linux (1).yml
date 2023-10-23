@@ -1,0 +1,515 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Migration Hub strategy recommendation CFN
+Parameters:
+  KeyName:
+    Description: Name of the EC2 KeyPair
+    Type: String
+    Default: linux_servers_ssh_key
+  SourceVPCName:
+    Description: The name of the Source VPC being created.
+    Type: String
+    Default: SourceVPC
+  YourIPAddress:
+    Description: The IP address range that can be used to SSH/ RDP to the EC2 instances
+    Default: 0.0.0.0/0
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+Mappings:
+  SubnetConfig:
+    Public0:
+      CIDR: 10.200.0.0/24
+    Public1:
+      CIDR: 10.200.1.0/24
+    Private00:
+      CIDR: 10.200.100.0/24
+    Private10:
+      CIDR: 10.200.200.0/24
+    Private01:
+      CIDR: 10.200.101.0/24
+    Private11:
+      CIDR: 10.200.201.0/24
+  AZRegions:
+    us-east-1:
+      AZs:
+        - a
+        - b
+    us-west-2:
+      AZs:
+        - a
+        - b
+    us-east-2:
+      AZs:
+        - a
+        - b
+Resources:
+  SourceEnvVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.199.0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value:
+            Ref: SourceVPCName
+  SourceEnvSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: SourceEnvVPC
+      AvailabilityZone:
+        Fn::Sub:
+          - ${AWS::Region}${AZ}
+          - AZ:
+              Fn::Select:
+                - 0
+                - Fn::FindInMap:
+                    - AZRegions
+                    - Ref: AWS::Region
+                    - AZs
+      CidrBlock: 10.199.0.0/24
+      MapPublicIpOnLaunch: 'true'
+      Tags:
+        - Key: Network
+          Value: Public
+        - Key: Name
+          Value:
+            Fn::Join:
+              - ''
+              - - Ref: SourceVPCName
+                - -public-
+                - Fn::Select:
+                    - 0
+                    - Fn::FindInMap:
+                        - AZRegions
+                        - Ref: AWS::Region
+                        - AZs
+  WebServerSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+      - SourceEnvSubnet
+    Properties:
+      GroupName: WebServerSG
+      GroupDescription: Web Server SG
+      VpcId:
+        Ref: SourceEnvVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3389'
+          ToPort: '3389'
+          CidrIp: !Ref YourIPAddress
+      Tags:
+        - Key: Name
+          Value: WebServerSG
+  SecurityGroupWinRMIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: WebServerSG
+      IpProtocol: tcp
+      FromPort: '5986'
+      ToPort: '5986'
+      SourceSecurityGroupId:
+        Ref: WebServerSG
+  DBServerSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+      - SourceEnvSubnet
+    Properties:
+      GroupName: DBServerSG
+      GroupDescription: DB Server SG
+      VpcId:
+        Ref: SourceEnvVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3389'
+          ToPort: '3389'
+          CidrIp: !Ref YourIPAddress
+      Tags:
+        - Key: Name
+          Value: DBServerSG
+  HTTPWebSGIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - WebServerSG
+    Properties:
+      IpProtocol: tcp
+      ToPort: 80
+      FromPort: 80
+      CidrIp: !Ref YourIPAddress
+      GroupId:
+        Ref: WebServerSG
+  WebIngress4:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - WebServerSG
+    Properties:
+      IpProtocol: tcp
+      ToPort: 8081
+      FromPort: 8081
+      CidrIp: !Ref YourIPAddress
+      GroupId:
+        Ref: WebServerSG
+  WebIngress5:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - WebServerSG
+    Properties:
+      IpProtocol: tcp
+      ToPort: 8080
+      FromPort: 8080
+      CidrIp: !Ref YourIPAddress
+      GroupId:
+        Ref: WebServerSG
+  WebIngress6:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - WebServerSG
+    Properties:
+      IpProtocol: tcp
+      ToPort: 22
+      FromPort: 22
+      CidrIp: !Ref YourIPAddress
+      GroupId:
+        Ref: WebServerSG
+  DBIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - DBServerSG
+    Properties:
+      GroupId:
+        Ref: DBServerSG
+      IpProtocol: tcp
+      ToPort: 1433
+      FromPort: 1433
+      SourceSecurityGroupId:
+        Ref: WebServerSG
+  DBIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - DBServerSG
+    Properties:
+      GroupId:
+        Ref: DBServerSG
+      IpProtocol: tcp
+      ToPort: 1433
+      FromPort: 1433
+      CidrIp: 10.199.0.0/16
+  DBIngress3:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - DBServerSG
+    Properties:
+      GroupId:
+        Ref: DBServerSG
+      IpProtocol: tcp
+      ToPort: 1433
+      FromPort: 1433
+      CidrIp: 10.200.0.0/16
+  DBIngress4:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - DBServerSG
+    Properties:
+      GroupId:
+        Ref: DBServerSG
+      IpProtocol: tcp
+      ToPort: 5432
+      FromPort: 5432
+      CidrIp: 10.199.0.0/16
+  DBIngress5:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - DBServerSG
+    Properties:
+      GroupId:
+        Ref: DBServerSG
+      IpProtocol: tcp
+      ToPort: 5432
+      FromPort: 5432
+      CidrIp: 10.200.0.0/16
+  DBIngress6:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+      - DBServerSG
+    Properties:
+      GroupId:
+        Ref: DBServerSG
+      IpProtocol: tcp
+      ToPort: 22
+      FromPort: 22
+      CidrIp: !Ref YourIPAddress
+  SourceGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Join:
+              - ''
+              - - Ref: SourceVPCName
+                - -IGW
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn:
+      - SourceEnvVPC
+    Properties:
+      VpcId:
+        Ref: SourceEnvVPC
+      InternetGatewayId:
+        Ref: SourceGateway
+  SourceEnvRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn:
+      - SourceEnvVPC
+      - SourceEnvSubnet
+    Properties:
+      VpcId:
+        Ref: SourceEnvVPC
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Join:
+              - ''
+              - - Ref: SourceVPCName
+                - -public-route-table
+  SourceEnvRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - SourceEnvSubnet
+      - SourceEnvRouteTable
+    Properties:
+      SubnetId:
+        Ref: SourceEnvSubnet
+      RouteTableId:
+        Ref: SourceEnvRouteTable
+  SourceEnvAllRoute:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - SourceEnvRouteTable
+    Properties:
+      RouteTableId:
+        Ref: SourceEnvRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: SourceGateway
+  JavaDBServer:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - SSHKeyGeneratorExecution
+    Properties:
+      InstanceType: t2.medium
+      SecurityGroupIds:
+        - Ref: DBServerSG
+      SubnetId:
+        Ref: SourceEnvSubnet
+      PrivateIpAddress: 10.199.0.140
+      KeyName:
+        Ref: KeyName
+      ImageId: ami-09550d25d3bdc9b80
+      Monitoring: true
+      IamInstanceProfile:
+        Ref: EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: Source-Java-DBServer
+        - Key: env
+          Value: strategy-recommendations-workshop
+  JavaWebServer:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - SSHKeyGeneratorExecution
+      - JavaDBServer
+    Properties:
+      InstanceType: t2.medium
+      SecurityGroupIds:
+        - Ref: WebServerSG
+      SubnetId:
+        Ref: SourceEnvSubnet
+      KeyName:
+        Ref: KeyName
+      ImageId: ami-03c5a85eef1fdd314
+      Monitoring: true
+      IamInstanceProfile:
+        Ref: EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: Source-Java-WebServer
+        - Key: env
+          Value: strategy-recommendations-workshop
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+  SSHKeyGenerator:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      Runtime: python3.8
+      Handler: generate_ssh_key.lambda_handler
+      Role:
+        Fn::GetAtt:
+          - SSHKeyGeneratorRole
+          - Arn
+      CodeUri: s3://application-migration-with-aws-workshop/lambda/438e5a43749a18ff0f4c7a7d0363e695
+  SSHKeyGeneratorExecution:
+    Type: Custom::SSHKeyGenerator
+    DependsOn:
+      - SSHKeyGenerator
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - SSHKeyGenerator
+          - Arn
+  SSHKeyGeneratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ssm:*
+                  - ec2:*
+                Resource: '*'
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - Ref: EC2InstanceRole
+  ApiGw:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+  GetSSMParamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role:
+        Fn::GetAtt:
+          - GetSSMParamFunctionRole
+          - Arn
+      CodeUri: s3://application-migration-with-aws-workshop/lambda/4eb5dfa8efc17763bc41edb070cb9cd2
+      Events:
+        SSMReturningApi:
+          Type: Api
+          Properties:
+            Path: /get_ssm_param
+            Method: GET
+            RestApiId:
+              Ref: ApiGw
+  GetSSMParamFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - 'ssm:'
+                  - cloudwatch:*
+                  - ssm:GetParameter
+                Resource: '*'
+  ecsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      RoleName: ecsTaskExecutionRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: taskPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:DescribeParameters
+                Resource: '*'
+              - Effect: Allow
+                Action: ssm:GetParameters
+                Resource: '*'
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: '*'
+              - Effect: Allow
+                Action: elasticfilesystem:*
+                Resource: '*'
+Outputs:
+  JavaWebAppURL:
+    Description: The Java Web Application URL
+    Value:
+      !Sub http://${JavaWebServer.PublicDnsName}:8080/
+  JavaWebServerUsername:
+    Description: Username for webserver
+    Value: ubuntu
+  JavaWebServerDNSName:
+    Description: The Java Web Server DNS Name
+    Value:
+      !Sub http://${JavaWebServer.PublicDnsName}
+  JavaDBServerDNSName:
+    Description: The Java Database Server DNS Name
+    Value:
+      Fn::GetAtt:
+        - JavaDBServer
+        - PublicDnsName
+  SSHKeyURL:
+    Description: URL to get the SSH Key
+    Value:
+      Fn::Sub: https://${ApiGw}.execute-api.${AWS::Region}.amazonaws.com/prod/get_ssm_param
